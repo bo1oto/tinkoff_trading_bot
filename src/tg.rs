@@ -76,7 +76,9 @@ pub async fn answer(bot: Bot, msg: Message, cmd: Command, tx: Arc<Mutex<Sender<R
         return Ok(())
     }
     match cmd {
-        Command::Help => bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?,
+        Command::Help => {
+            bot.send_message(msg.chat.id, Command::descriptions().to_string()).await?
+        },
         Command::State => {
             tx.lock().await.send(RequestType::StateRequest).await.unwrap();
             bot.send_message(msg.chat.id, format!("Запрашиваю состояние портфеля")).await?

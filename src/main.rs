@@ -1,22 +1,23 @@
-use tonic::{
-    Status,
-    service::Interceptor,
-    transport::{Channel, ClientTlsConfig}
+use tonic::{Status, service::Interceptor, transport::{Channel, ClientTlsConfig}, Code};
+use tcs::{
+    {PositionsRequest, Quotation},
+    operations_service_client::OperationsServiceClient
 };
+use crate::bot::{Bot, Statistics, DayStat, ProfitStat};
+use tokio::{join, try_join};
+
+#[cfg(debug_assertions)]
 use tcs::{
     {GetAccountsRequest, InstrumentRequest, GetTradingStatusRequest, GetOrderStateRequest,
-     PositionsRequest, PostOrderRequest, Quotation, TradingSchedulesRequest, CandleInterval,
+     PostOrderRequest, TradingSchedulesRequest, CandleInterval,
      GetCandlesRequest
     },
     orders_service_client::OrdersServiceClient,
     market_data_service_client::MarketDataServiceClient,
     users_service_client::UsersServiceClient,
     instruments_service_client::InstrumentsServiceClient,
-    operations_service_client::OperationsServiceClient
 
 };
-use crate::bot::{Bot, Statistics, DayStat, ProfitStat};
-use tokio::join;
 
 
 pub mod tcs;
@@ -56,22 +57,25 @@ static mut ACCOUNT_ID: String = String::new();
 
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Status> {
     unsafe { ACCOUNT_ID = std::env::var("T_ACCOUNT_ID").unwrap() }
     create_env();
     let inter = DefaultInterceptor { token: std::env::var("TOKEN_BOT").unwrap() };
     let channel = Channel::from_static("https://invest-public-api.tinkoff.ru:443/")
-        .tls_config(ClientTlsConfig::new())?
+        .tls_config(ClientTlsConfig::new()).unwrap()
         .connect()
-        .await?;
-    //get_account(channel.clone()).await?;
-    //get_status(channel.clone()).await?;
-    //get_instrument(channel, inter).await?;
-    //test_get_order(channel.clone()).await?;
-    //test_order(channel.clone()).await?;
-    //get_schedule(channel.clone()).await?;
-    //test_candles(channel.clone()).await?;
-    //return Ok(());
+        .await.unwrap();
+
+    {
+        //get_account(channel.clone()).await?;
+        //get_status(channel.clone()).await?;
+        //get_instrument(channel, inter).await?;
+        //test_get_order(channel.clone()).await?;
+        //test_order(channel.clone()).await?;
+        //get_schedule(channel.clone()).await?;
+        //test_candles(channel.clone()).await?;
+        //return Ok(());
+    }// to check something
 
     loop {
         let (mut disp, rx, tg_bot) = tg::start().await;
@@ -85,17 +89,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         let f = || async move {
             disp.dispatch().await;
+            println!("f ended");
+            if true {
+                Err(Status::new(Code::Unknown, "Tg crash"))
+            } else {
+                Ok(())
+            }
         };
-        let tg_t = tokio::spawn(f());
+        //let tg_t = tokio::spawn(f());
+        // let bb = bot.handler(rx);
 
-        let result = join!(bot.handler(rx), tg_t);
+        let result = try_join!(bot.handler(rx), f());
+        println!("try_join ended");
 
-        if let Err(err) = result.0 {
-            panic!("Something going wrong...\n{}", err)
-        } else if let Ok(_) = result.1 {
+        if let Err(err) = result {
+            if err.message().eq("Tg crash") {
+                println!("Something going wrong in tg_bot, but we will return soon!");
+            } else {
+                panic!("Something going wrong...\n{}", err)
+            }
+        } else if let Ok(_) = result {
             break;
         } else {
-            println!("Something going wrong in tg_bot, but we will return soon!");
         }
     }
 
@@ -172,8 +187,7 @@ fn create_env() {
     }
 }
 
-pub async fn get_money(channel: Channel, inter: DefaultInterceptor)
-                       -> Result<Quotation, Box<dyn std::error::Error>> {
+pub async fn get_money(channel: Channel, inter: DefaultInterceptor) -> Result<Quotation, Status> {
     let req = PositionsRequest {
         account_id: unsafe { ACCOUNT_ID.clone() },
     };
@@ -189,9 +203,9 @@ pub async fn get_money(channel: Channel, inter: DefaultInterceptor)
     panic!("Can't take RUB money!")
 }
 
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn get_schedule(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn get_schedule(channel: Channel) -> Result<(), Status> {
     use prost_types::Timestamp;
     use std::time::SystemTime;
     use chrono::{TimeZone, Utc};
@@ -215,9 +229,9 @@ async fn get_schedule(channel: Channel) -> Result<(), Box<dyn std::error::Error>
     println!("{:#?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn get_instrument(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn get_instrument(channel: Channel) -> Result<(), Status> {
     let inter = DefaultInterceptor {
         token: String::from(std::env::var("TOKEN_BOT").unwrap())
     };
@@ -234,9 +248,9 @@ async fn get_instrument(channel: Channel) -> Result<(), Box<dyn std::error::Erro
     println!("{:#?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn get_status(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn get_status(channel: Channel) -> Result<(), Status> {
     let inter = DefaultInterceptor {
         token: String::from(std::env::var("TOKEN_BOT").unwrap())
     };
@@ -251,9 +265,9 @@ async fn get_status(channel: Channel) -> Result<(), Box<dyn std::error::Error>> 
     println!("{:#?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn get_account(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn get_account(channel: Channel) -> Result<(), Status> {
     let inter = DefaultInterceptor {
         token: String::from(std::env::var("TOKEN_BOT").unwrap())
     };
@@ -265,9 +279,9 @@ async fn get_account(channel: Channel) -> Result<(), Box<dyn std::error::Error>>
     println!("{:#?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn test_get_order(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn test_get_order(channel: Channel) -> Result<(), Status> {
     let inter = DefaultInterceptor {
         token: String::from(std::env::var("TOKEN_BOT").unwrap())
     };
@@ -281,9 +295,9 @@ async fn test_get_order(channel: Channel) -> Result<(), Box<dyn std::error::Erro
     println!("{:?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn test_order(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn test_order(channel: Channel) -> Result<(), Status> {
     let inter = DefaultInterceptor {
         token: String::from(std::env::var("TOKEN_BOT").unwrap())
     };
@@ -311,9 +325,9 @@ async fn test_order(channel: Channel) -> Result<(), Box<dyn std::error::Error>> 
     println!("{:?}", response.into_inner());
     Ok(())
 }
-#[cfg(debug_assertions)]
 #[allow(dead_code)]
-async fn test_candles(channel: Channel) -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(debug_assertions)]
+async fn test_candles(channel: Channel) -> Result<(), Status> {
     use prost_types::Timestamp;
     use std::time::SystemTime;
     use chrono::{TimeZone, Utc};

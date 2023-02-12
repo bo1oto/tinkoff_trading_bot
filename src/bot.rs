@@ -9,6 +9,7 @@ use prost_types::Timestamp;
 
 use std::fmt::{Debug, Display, Formatter};
 use tonic:: {
+    Status,
     transport::Channel,
     codegen::InterceptedService,
 };
@@ -223,10 +224,10 @@ pub struct Settings {
 }
 
 pub trait Strategy {
-    fn analyze_ob(&mut self, orders: &GetOrderBookResponse, state: &State) -> Action {
+    fn analyze_ob(&mut self, _: &GetOrderBookResponse, _: &State) -> Action {
         panic!("Analyze order book not implemented")
     }
-    fn analyze_c(&mut self, candles: &GetCandlesResponse, state: &State) -> Action {
+    fn analyze_c(&mut self, _: &GetCandlesResponse, _: &State) -> Action {
         panic!("Analyze candles not implemented")
     }
     fn get_take_profit(&mut self, p: Quotation, l: i64) -> (Quotation, i64, OrderDirection);
@@ -329,10 +330,6 @@ impl<'a> Bot {
         }
     }
 
-    pub fn update_tg_bot_ref(&mut self, tg_bot: teloxide::prelude::Bot) {
-        self.tg_bot = Arc::new(tg_bot);
-    }
-
     fn get_order_id() -> (u32, String) {
         use std::str::FromStr;
         let contents = std::fs::read_to_string(Self::ADD_INFO_PATH.to_owned() + "oid.txt")
@@ -347,8 +344,7 @@ impl<'a> Bot {
             });
     }
 
-    async fn get_money(&mut self)
-        -> Result<Quotation, Box<dyn std::error::Error>> {
+    async fn get_money(&mut self) -> Result<Quotation, Status> {
         let req = PositionsRequest {
             account_id: self.settings.account_id.clone(),
         };
@@ -467,8 +463,7 @@ impl<'a> Bot {
         }
     }
 
-    pub async fn handler(mut self, mut rx: Receiver<RequestType>)
-        -> Result<(), Box<dyn std::error::Error>>  {
+    pub async fn handler(mut self, mut rx: Receiver<RequestType>) -> Result<(), Status>  {
         const SLEEP_INTERVAL_TIME: Duration = Duration::new(60, 0);
         const PAUSE_TIME: Duration = Duration::new(0, 500_000_000);
         const LIMIT: Duration = Duration::new(60, 1);
@@ -510,7 +505,7 @@ impl<'a> Bot {
         loop {
             self.get_from_tg(&mut rx).await;
             let result = match self.settings.data_type {
-                AnalysisType::OrderBook(depth) => {
+                AnalysisType::OrderBook(_) => {
                     let response = {
                         let response = self.market_client.get_order_book(req_ob.clone()).await;
                         if let Err(_) = &response {
@@ -521,7 +516,7 @@ impl<'a> Bot {
                         }
                         response.unwrap()
                     };
-                    if response.get_ref().orderbook_ts.is_none() {
+                    if response.get_ref().bids.is_empty() && response.get_ref().asks.is_empty() {
                         if let Some(State::Seeking(..) | State::InPosition(..)) = self.state.as_ref() {
                             let d = self.get_sleep_time();
                             self.state = Some(State::Sleeping(Instant::now(), d.clone()));
@@ -616,7 +611,7 @@ impl<'a> Bot {
     }
 
     async fn place_order(&mut self, lots: i64, price: Quotation, direction: OrderDirection)
-        -> Result<String, Box<dyn std::error::Error>> {
+        -> Result<String, Status> {
         self.order_id = {
             let next = self.order_id.0 + 1;
             let next = (next, next.to_string());
@@ -635,12 +630,11 @@ impl<'a> Bot {
         };
         return match self.order_client.post_order(req).await {
             Ok(response) => Ok(response.get_ref().order_id.clone()),
-            Err(err) => Err(Box::new(err))
+            Err(err) => Err(err)
         };
     }
 
-    async fn get_order_time(&mut self, order_id: String)
-        -> Result<String, Box<dyn std::error::Error>> {
+    async fn get_order_time(&mut self, order_id: String) -> Result<String, Status> {
         let req = GetOrderStateRequest {
             account_id: self.settings.account_id.clone(),
             order_id
@@ -664,8 +658,7 @@ impl<'a> Bot {
                       price_out: p_out,
                       lots: l,
                       direction: d,
-                      id: (open_id, close_id),
-                      ..}: Position) {
+                      id: (open_id, close_id), ..}: Position) {
         let mut file = std::fs::read_to_string(
             Self::ADD_INFO_PATH.to_owned() + "today.json").unwrap();
         let mut stat: DayStat = serde_json::from_str(file.as_str()).unwrap();
@@ -705,8 +698,7 @@ impl<'a> Bot {
         file.write_str(serde_json::to_string(&stat).unwrap().as_str()).unwrap();
     }
 
-    async fn update_position_state(&mut self, mut pos: Position)
-        -> Result<State, Box<dyn std::error::Error>> {
+    async fn update_position_state(&mut self, mut pos: Position) -> Result<State, Status> {
         let order_id = {
             if pos.state == PosState::WaitClose || pos.state == PosState::PartialClose {
                 pos.id.1.clone()
@@ -761,7 +753,7 @@ impl<'a> Bot {
         }
     }
 
-    async fn cancel_order(&mut self, order_id: String) -> Result<(), Box<dyn std::error::Error>> {
+    async fn cancel_order(&mut self, order_id: String) -> Result<(), Status> {
         if let Err(err) = self.order_client.cancel_order(
             CancelOrderRequest {
                 order_id,
@@ -773,7 +765,7 @@ impl<'a> Bot {
         Ok(())
     }
 
-    async fn portfolio_control(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn portfolio_control(&mut self) -> Result<bool, Status> {
         let req = PositionsRequest {
             account_id: self.settings.account_id.clone(),
         };
@@ -789,7 +781,7 @@ impl<'a> Bot {
             => Ok(positions == 0),
         }
     }
-    async fn orders_control(&mut self) -> Result<bool, Box<dyn std::error::Error>> {
+    async fn orders_control(&mut self) -> Result<bool, Status> {
         let req = GetOrdersRequest {
             account_id: self.settings.account_id.clone()
         };
@@ -821,7 +813,7 @@ impl<'a> Bot {
         }
     }
 
-    async fn solve_problems (&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn solve_problems (&mut self) -> Result<(), Status> {
         match (self.portfolio_control().await, self.orders_control().await) {
             (Ok(false), Ok(false)) => {
                 // Надо чёт с портфелем делать
